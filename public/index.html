@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="it" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IP Check</title>
+
+  <!-- Leaflet CSS (served locally) -->
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
+  <!-- Font Awesome (served locally) -->
+  <link rel="stylesheet" href="/vendor/fontawesome/css/all.min.css" />
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+  <!-- ── NAVBAR ── -->
+  <nav class="navbar" role="navigation" aria-label="Main navigation">
+    <div class="navbar-inner">
+      <div class="logo">
+        <i class="fa-solid fa-shield-halved"></i>
+        <span>IP Check</span>
+      </div>
+
+      <div class="nav-tabs" role="tablist">
+        <button class="tab-btn active" data-tab="myip" role="tab" aria-selected="true">
+          <i class="fa-solid fa-globe"></i>
+          <span data-i18n="nav.myip">Il Mio IP</span>
+        </button>
+        <button class="tab-btn" data-tab="ping" role="tab" aria-selected="false">
+          <i class="fa-solid fa-satellite-dish"></i>
+          <span data-i18n="nav.ping">Ping</span>
+        </button>
+        <button class="tab-btn" data-tab="dns" role="tab" aria-selected="false">
+          <i class="fa-solid fa-server"></i>
+          <span data-i18n="nav.dns">DNS Lookup</span>
+        </button>
+      </div>
+
+      <div class="nav-controls">
+        <button class="ctrl-btn" id="lang-toggle" aria-label="Toggle language" title="Cambia lingua / Switch language">
+          <i class="fa-solid fa-language"></i>
+          <span id="lang-label">IT</span>
+        </button>
+        <button class="ctrl-btn" id="theme-toggle" aria-label="Toggle theme">
+          <i class="fa-solid fa-moon" id="theme-icon"></i>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ── MAIN CONTENT ── -->
+  <main class="main-content">
+
+    <!-- ════ TAB 1 · MY IP ════ -->
+    <section id="tab-myip" class="tab-pane active" role="tabpanel">
+      <div class="section-header">
+        <h1 data-i18n="myip.heading">Il Mio Indirizzo IP</h1>
+        <p class="subtitle" data-i18n="myip.subtitle">Le tue informazioni di rete attuali</p>
+        <button class="btn btn-secondary" id="refresh-myip">
+          <i class="fa-solid fa-rotate-right"></i>
+          <span data-i18n="myip.refreshBtn">Aggiorna</span>
+        </button>
+      </div>
+
+      <!-- IP Cards -->
+      <div class="ip-cards-grid">
+        <div class="card ip-card" id="ipv4-card">
+          <div class="ip-card-icon ipv4-color"><i class="fa-solid fa-network-wired"></i></div>
+          <div class="ip-card-body">
+            <div class="ip-label" data-i18n="myip.ipv4">Indirizzo IPv4</div>
+            <div class="ip-value" id="ipv4-value"><span class="skeleton-text"></span></div>
+          </div>
+          <button class="copy-btn" id="copy-ipv4" data-i18n-title="myip.copy" title="Copia">
+            <i class="fa-regular fa-copy"></i>
+          </button>
+        </div>
+        <div class="card ip-card" id="ipv6-card">
+          <div class="ip-card-icon ipv6-color"><i class="fa-solid fa-wifi"></i></div>
+          <div class="ip-card-body">
+            <div class="ip-label" data-i18n="myip.ipv6">Indirizzo IPv6</div>
+            <div class="ip-value" id="ipv6-value"><span class="skeleton-text"></span></div>
+          </div>
+          <button class="copy-btn" id="copy-ipv6" data-i18n-title="myip.copy" title="Copia">
+            <i class="fa-regular fa-copy"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Map + Location Info -->
+      <div class="map-info-grid">
+        <div class="card map-card" id="myip-map-card">
+          <div class="card-title"><i class="fa-solid fa-map-location-dot"></i> <span data-i18n="myip.location">La Tua Posizione</span></div>
+          <div id="myip-map" class="map-container"></div>
+        </div>
+        <div class="card location-card" id="myip-location-card">
+          <div class="card-title"><i class="fa-solid fa-circle-info"></i> <span data-i18n="myip.locationDetails">Dettagli Posizione</span></div>
+          <div id="myip-location-details" class="location-details">
+            <div class="skeleton-row"></div>
+            <div class="skeleton-row"></div>
+            <div class="skeleton-row"></div>
+            <div class="skeleton-row"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════ TAB 2 · PING ════ -->
+    <section id="tab-ping" class="tab-pane" role="tabpanel">
+      <div class="section-header">
+        <h1 data-i18n="ping.heading">Strumento Ping</h1>
+        <p class="subtitle" data-i18n="ping.subtitle">Verifica la connettività verso qualsiasi indirizzo IP</p>
+      </div>
+
+      <div class="card input-card">
+        <div class="input-row">
+          <div class="input-wrapper">
+            <i class="fa-solid fa-magnifying-glass input-icon"></i>
+            <input
+              type="text"
+              id="ping-input"
+              class="text-input mono"
+              data-i18n-placeholder="ping.placeholder"
+              placeholder="Inserisci indirizzo IP (es. 8.8.8.8)"
+              maxlength="64"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+          <button class="btn btn-primary" id="ping-btn">
+            <i class="fa-solid fa-paper-plane"></i>
+            <span data-i18n="ping.pingBtn">Avvia Ping</span>
+          </button>
+        </div>
+        <div id="ping-error" class="error-msg" hidden></div>
+      </div>
+
+      <div id="ping-results-section" hidden>
+        <div class="ping-results-grid">
+          <!-- Packets table -->
+          <div class="card">
+            <div class="card-title">
+              <i class="fa-solid fa-list-check"></i>
+              <span data-i18n="ping.results">Risultati Ping</span>
+              <span class="badge" id="ping-status-badge"></span>
+            </div>
+            <div class="table-wrapper">
+              <table class="results-table" id="ping-table">
+                <thead>
+                  <tr>
+                    <th data-i18n="ping.seq">N°</th>
+                    <th data-i18n="ping.status">Stato</th>
+                    <th data-i18n="ping.time">Tempo</th>
+                    <th data-i18n="ping.ttl">TTL</th>
+                    <th data-i18n="ping.bytes">Byte</th>
+                  </tr>
+                </thead>
+                <tbody id="ping-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Stats card -->
+          <div class="card" id="ping-stats-card">
+            <div class="card-title">
+              <i class="fa-solid fa-chart-bar"></i>
+              <span data-i18n="ping.summary">Sommario</span>
+            </div>
+            <div class="stats-grid" id="ping-stats"></div>
+          </div>
+        </div>
+
+        <!-- Ping Location -->
+        <div class="map-info-grid" id="ping-geo-section" hidden>
+          <div class="card map-card">
+            <div class="card-title"><i class="fa-solid fa-map-location-dot"></i> <span data-i18n="ping.location">Posizione Destinazione</span></div>
+            <div id="ping-map" class="map-container"></div>
+          </div>
+          <div class="card location-card">
+            <div class="card-title"><i class="fa-solid fa-circle-info"></i> <span data-i18n="myip.locationDetails">Dettagli Posizione</span></div>
+            <div id="ping-location-details" class="location-details"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════ TAB 3 · DNS LOOKUP ════ -->
+    <section id="tab-dns" class="tab-pane" role="tabpanel">
+      <div class="section-header">
+        <h1 data-i18n="dns.heading">DNS Lookup</h1>
+        <p class="subtitle" data-i18n="dns.subtitle">Interroga i record DNS per qualsiasi dominio</p>
+      </div>
+
+      <div class="card input-card">
+        <div class="input-row">
+          <div class="input-wrapper">
+            <i class="fa-solid fa-magnifying-glass input-icon"></i>
+            <input
+              type="text"
+              id="dns-input"
+              class="text-input mono"
+              data-i18n-placeholder="dns.placeholder"
+              placeholder="Inserisci dominio (es. google.com)"
+              maxlength="253"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+          <select id="dns-type" class="select-input" aria-label="DNS record type">
+            <option value="A">A (IPv4)</option>
+            <option value="AAAA">AAAA (IPv6)</option>
+            <option value="MX">MX (Mail)</option>
+            <option value="NS">NS (Nameserver)</option>
+            <option value="TXT">TXT</option>
+            <option value="CNAME">CNAME</option>
+            <option value="SOA">SOA</option>
+          </select>
+          <button class="btn btn-primary" id="dns-btn">
+            <i class="fa-solid fa-search"></i>
+            <span data-i18n="dns.lookupBtn">Cerca</span>
+          </button>
+        </div>
+        <div id="dns-error" class="error-msg" hidden></div>
+      </div>
+
+      <div id="dns-results-section" hidden>
+        <div class="card">
+          <div class="card-title">
+            <i class="fa-solid fa-table-list"></i>
+            <span data-i18n="dns.results">Record DNS</span>
+            <span class="badge badge-blue" id="dns-domain-badge"></span>
+          </div>
+          <div class="table-wrapper">
+            <table class="results-table" id="dns-table">
+              <thead id="dns-thead"></thead>
+              <tbody id="dns-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ── FOOTER ── -->
+  <footer class="footer">
+    <p>
+      <i class="fa-solid fa-shield-halved"></i>
+      IP Check &mdash; <span data-i18n="footer.madeWith">Fatto con</span> <i class="fa-solid fa-heart heart"></i>
+    </p>
+  </footer>
+
+  <!-- Toast notification -->
+  <div id="toast" class="toast" role="alert" aria-live="polite"></div>
+
+  <!-- Leaflet JS (served locally) -->
+  <script src="/vendor/leaflet/leaflet.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
