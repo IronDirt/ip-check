@@ -93,6 +93,9 @@ let currentTheme = localStorage.getItem('ipcheck-theme') ||
   (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 let myipMap = null;
 let pingMap = null;
+// Keep marker references so we can remove them without fragile instanceof checks
+let myipMarker = null;
+let pingMarker = null;
 let myIPv4 = null;
 let myIPv6 = null;
 
@@ -155,14 +158,16 @@ async function copyText(text) {
 
 /* ── Leaflet map helper ─────────────────────────────────────────────── */
 
-function initOrUpdateMap(mapId, mapRef, lat, lon, popupHtml) {
-  if (mapRef) {
-    mapRef.setView([lat, lon], 10);
-    // remove old markers
-    mapRef.eachLayer(l => { if (l instanceof L.Marker) mapRef.removeLayer(l); });
-    L.marker([lat, lon]).addTo(mapRef).bindPopup(popupHtml).openPopup();
-    mapRef.invalidateSize();
-    return mapRef;
+function initOrUpdateMap(mapId, existingMap, existingMarkerRef, lat, lon, popupHtml) {
+  if (existingMap) {
+    existingMap.setView([lat, lon], 10);
+    // Remove old marker via stored reference (avoids fragile instanceof check)
+    if (existingMarkerRef) {
+      existingMap.removeLayer(existingMarkerRef);
+    }
+    const marker = L.marker([lat, lon]).addTo(existingMap).bindPopup(popupHtml).openPopup();
+    existingMap.invalidateSize();
+    return { map: existingMap, marker };
   }
   const map = L.map(mapId, { zoomControl: true, scrollWheelZoom: false });
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -170,8 +175,8 @@ function initOrUpdateMap(mapId, mapRef, lat, lon, popupHtml) {
     maxZoom: 19
   }).addTo(map);
   map.setView([lat, lon], 10);
-  L.marker([lat, lon]).addTo(map).bindPopup(popupHtml).openPopup();
-  return map;
+  const marker = L.marker([lat, lon]).addTo(map).bindPopup(popupHtml).openPopup();
+  return { map, marker };
 }
 
 /* ── Location details renderer ──────────────────────────────────────── */
@@ -264,7 +269,9 @@ async function loadMyIP() {
     renderLocationDetails('myip-location-details', geo);
     if (geo.lat && geo.lon) {
       const popup = `<b>${escHtml(geo.city || '')}, ${escHtml(geo.country || '')}</b>`;
-      myipMap = initOrUpdateMap('myip-map', myipMap, geo.lat, geo.lon, popup);
+      const result = initOrUpdateMap('myip-map', myipMap, myipMarker, geo.lat, geo.lon, popup);
+      myipMap = result.map;
+      myipMarker = result.marker;
     }
   } catch (_) {
     document.getElementById('myip-location-details').innerHTML =
@@ -277,12 +284,14 @@ async function loadMyIP() {
    ══════════════════════════════════════════════════════════════════════ */
 
 function validateIP(ip) {
+  // Basic client-side format check — the server performs full validation.
   const ipv4Re = /^(\d{1,3}\.){3}\d{1,3}$/;
-  const ipv6Re = /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|::1)$/;
+  // Accept any string that looks like an IPv6 address (colons + hex)
+  const ipv6Re = /^[0-9a-fA-F:]+$/;
   if (ipv4Re.test(ip)) {
     return ip.split('.').every(p => Number(p) <= 255);
   }
-  return ipv6Re.test(ip);
+  return ip.includes(':') && ipv6Re.test(ip);
 }
 
 function statusBadge(status) {
@@ -410,7 +419,9 @@ async function doPing(ip) {
         renderLocationDetails('ping-location-details', geo);
         if (geo.lat && geo.lon) {
           const popup = `<b>${escHtml(ip)}</b><br>${escHtml(geo.city || '')}, ${escHtml(geo.country || '')}`;
-          pingMap = initOrUpdateMap('ping-map', pingMap, geo.lat, geo.lon, popup);
+          const result = initOrUpdateMap('ping-map', pingMap, pingMarker, geo.lat, geo.lon, popup);
+          pingMap = result.map;
+          pingMarker = result.marker;
         }
       }
     } catch (_) { /* no geo, that's fine */ }
@@ -510,8 +521,6 @@ async function doDNSLookup(domain, type) {
 /* ══════════════════════════════════════════════════════════════════════
    TAB SWITCHING
    ══════════════════════════════════════════════════════════════════════ */
-
-let myIPLoaded = false;
 
 function switchTab(tabId) {
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));

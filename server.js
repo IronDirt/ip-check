@@ -1,16 +1,27 @@
 'use strict';
 
 const express = require('express');
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const http = require('http');
 const dns = require('dns').promises;
 const path = require('path');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Serve Leaflet from node_modules
+app.use('/vendor/leaflet', express.static(
+  path.join(__dirname, 'node_modules/leaflet/dist')
+));
+
+// Serve Font Awesome from node_modules
+app.use('/vendor/fontawesome', express.static(
+  path.join(__dirname, 'node_modules/@fortawesome/fontawesome-free')
+));
 
 /* ─── IP validation ──────────────────────────────────────────────────── */
 
@@ -21,7 +32,11 @@ function isIPv4(ip) {
 }
 
 function isIPv6(ip) {
-  // Covers full, compressed, loopback IPv6
+  // Covers the main IPv6 format variants (RFC 5952):
+  //  - Full 8-group:                         1:2:3:4:5:6:7:8
+  //  - :: compressed forms:                  ::1, 1::, 1:2::3, etc.
+  //  - Link-local with zone ID:              fe80::1%eth0
+  //  - IPv4-mapped / IPv4-compatible:        ::ffff:192.0.2.1, ::192.0.2.1
   return /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]+|::(ffff(:0{1,4})?:)?((25[0-5]|(2[0-4]|1?[0-9])?[0-9])\.){3}(25[0-5]|(2[0-4]|1?[0-9])?[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1?[0-9])?[0-9])\.){3}(25[0-5]|(2[0-4]|1?[0-9])?[0-9]))$/.test(ip) || ip === '::1';
 }
 
@@ -83,8 +98,17 @@ function parsePingOutput(output) {
 
 /* ─── Routes ─────────────────────────────────────────────────────────── */
 
+// Rate limiter: max 10 ping/DNS requests per minute per IP
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' }
+});
+
 // POST /api/ping
-app.post('/api/ping', (req, res) => {
+app.post('/api/ping', apiLimiter, (req, res) => {
   const { ip } = req.body || {};
   if (!ip || typeof ip !== 'string') {
     return res.status(400).json({ error: 'IP address is required' });
@@ -96,16 +120,31 @@ app.post('/api/ping', (req, res) => {
 
   const count = 5;
   const isWin = process.platform === 'win32';
-  let cmd;
+
+  // Use execFile (not exec) to avoid shell interpretation — arguments are
+  // passed directly to the OS so no shell escaping is needed or possible.
+  let bin, args;
   if (isWin) {
-    cmd = `ping -n ${count} ${trimmed}`;
+    bin = 'ping';
+    args = ['-n', String(count), trimmed];
   } else if (isIPv6(trimmed)) {
-    cmd = `ping -6 -c ${count} -W 3 ${trimmed}`;
+    bin = 'ping';
+    args = ['-6', '-c', String(count), '-W', '3', trimmed];
   } else {
-    cmd = `ping -4 -c ${count} -W 3 ${trimmed}`;
+    bin = 'ping';
+    args = ['-4', '-c', String(count), '-W', '3', trimmed];
   }
 
-  exec(cmd, { timeout: 30000 }, (error, stdout, stderr) => {
+  execFile(bin, args, { timeout: 30000 }, (error, stdout, stderr) => {
+    // error is set when the process exits non-zero (e.g. 100% packet loss)
+    // or when the command itself cannot be found / times out.
+    if (error && !stdout && !stderr) {
+      return res.status(500).json({
+        error: error.code === 'ETIMEDOUT'
+          ? 'Ping timed out'
+          : 'Ping command failed: ' + error.message
+      });
+    }
     const output = stdout || stderr || '';
     const parsed = parsePingOutput(output);
     res.json({
@@ -119,7 +158,7 @@ app.post('/api/ping', (req, res) => {
 });
 
 // GET /api/geoip/:ip  (pass "me" to geolocate the server/client IP automatically)
-app.get('/api/geoip/:ip', (req, res) => {
+app.get('/api/geoip/:ip', apiLimiter, (req, res) => {
   const { ip } = req.params;
   if (ip !== 'me' && !isValidIP(ip)) {
     return res.status(400).json({ error: 'Invalid IP address' });
@@ -142,7 +181,7 @@ app.get('/api/geoip/:ip', (req, res) => {
 });
 
 // GET /api/dns?domain=example.com&type=A
-app.get('/api/dns', async (req, res) => {
+app.get('/api/dns', apiLimiter, async (req, res) => {
   const { domain, type = 'A' } = req.query;
   const domainRe = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
   if (!domain || !domainRe.test(domain)) {
