@@ -1,0 +1,12 @@
+{
+  "name": "ip-check",
+  "version": "1.0.0",
+  "description": "Professional IP checking, ping, and DNS lookup tool",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
