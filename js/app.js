@@ -225,6 +225,21 @@ function escHtml(s) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+/* ── IP helpers ─────────────────────────────────────────────────────── */
+
+function looksLikeIPv6(ip) { return typeof ip === 'string' && ip.includes(':'); }
+
+// Ask the server for the IP it sees for this connection.
+// Returns null when the endpoint is unreachable or the response is malformed.
+async function fetchServerIP() {
+  try {
+    const data = await fetchJSON('/api/myip');
+    return data.ip || null;
+  } catch (_) {
+    return null;
+  }
+}
+
 /* ══════════════════════════════════════════════════════════════════════
    MY IP
    ══════════════════════════════════════════════════════════════════════ */
@@ -236,31 +251,40 @@ async function loadMyIP() {
   document.getElementById('myip-location-details').innerHTML =
     '<div class="skeleton-row"></div><div class="skeleton-row"></div><div class="skeleton-row"></div>';
 
-  // Fetch IPv4 (ipify returns IPv4 by default)
+  // Fetch IPv4 (ipify returns IPv4 by default; fall back to server-detected IP)
   let ipv4 = null;
   try {
     const r4 = await fetchJSON('https://api.ipify.org?format=json');
     ipv4 = r4.ip;
-    myIPv4 = ipv4;
-    document.getElementById('ipv4-value').textContent = ipv4;
   } catch (_) {
-    document.getElementById('ipv4-value').textContent = t('myip.notAvailable');
+    // ipify unavailable – ask the server what IP it sees for this connection
+    const sip = await fetchServerIP();
+    if (sip && !looksLikeIPv6(sip)) ipv4 = sip;
   }
+  myIPv4 = ipv4;
+  document.getElementById('ipv4-value').textContent = ipv4 || t('myip.notAvailable');
 
-  // Fetch IPv6 (api64.ipify.org returns IPv6 when available)
+  // Fetch IPv6 (api64.ipify.org returns the client's IPv6 when available;
+  // falls back to the server-detected IP if the external API is unreachable
+  // or the connection has no IPv6 support)
+  let ipv6 = null;
   try {
     const r6 = await fetchJSON('https://api64.ipify.org?format=json');
-    const ip6 = r6.ip;
-    // Only show as IPv6 if it contains ':'
-    if (ip6 && ip6.includes(':')) {
-      myIPv6 = ip6;
-      document.getElementById('ipv6-value').textContent = ip6;
+    // api64 returns IPv6 only when the client has IPv6; otherwise falls back to IPv4
+    if (looksLikeIPv6(r6.ip)) {
+      ipv6 = r6.ip;
     } else {
-      document.getElementById('ipv6-value').textContent = t('myip.notAvailable');
+      // No IPv6 via api64 – check whether the server connection itself used IPv6
+      const sip = await fetchServerIP();
+      if (looksLikeIPv6(sip)) ipv6 = sip;
     }
   } catch (_) {
-    document.getElementById('ipv6-value').textContent = t('myip.notAvailable');
+    // api64 unreachable – try server-side detection
+    const sip = await fetchServerIP();
+    if (looksLikeIPv6(sip)) ipv6 = sip;
   }
+  myIPv6 = ipv6;
+  document.getElementById('ipv6-value').textContent = ipv6 || t('myip.notAvailable');
 
   // Geo-locate the IPv4 (or fall back to server-detected IP)
   const geoTarget = ipv4 || 'me';

@@ -3,9 +3,38 @@
 const express = require('express');
 const { execFile } = require('child_process');
 const http = require('http');
-const dns = require('dns').promises;
+const { Resolver: DnsPromiseResolver } = require('dns').promises;
+const { Resolver: DnsCallbackResolver } = require('dns');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
+
+// Combine the system DNS servers with Google's public resolvers so the app
+// works when the system stub resolver (e.g. systemd-resolved on 127.0.0.53)
+// is unavailable. System servers are tried first; public servers are used as
+// fallback when the system resolver refuses or times out.
+const PUBLIC_DNS = ['8.8.8.8', '8.8.4.4', '2001:4860:4860::8888', '2001:4860:4860::8844'];
+const COMBINED_DNS = [...require('dns').getServers(), ...PUBLIC_DNS];
+
+const dnsResolver = new DnsPromiseResolver();
+dnsResolver.setServers(COMBINED_DNS);
+
+// HTTP agent with a custom lookup so that http.get() calls (e.g. to
+// ip-api.com) use the combined DNS resolver rather than getaddrinfo().
+// IPv4 is preferred for the GeoIP endpoint because ip-api.com is an
+// IPv4-only service.
+const cbResolver = new DnsCallbackResolver();
+cbResolver.setServers(COMBINED_DNS);
+const geoipAgent = new http.Agent({
+  lookup: (hostname, _opts, cb) => {
+    cbResolver.resolve4(hostname, (err, v4) => {
+      if (!err) return cb(null, v4[0], 4);
+      cbResolver.resolve6(hostname, (err2, v6) => {
+        if (!err2) return cb(null, v6[0], 6);
+        cb(err2);
+      });
+    });
+  }
+});
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -159,7 +188,7 @@ app.get('/api/geoip/:ip', apiLimiter, (req, res) => {
   const apiPath = ip === 'me' ? '' : ip;
   const apiUrl = `http://ip-api.com/json/${apiPath}?fields=${fields}`;
 
-  http.get(apiUrl, (apiRes) => {
+  http.get(apiUrl, { agent: geoipAgent }, (apiRes) => {
     let data = '';
     apiRes.on('data', chunk => { data += chunk; });
     apiRes.on('end', () => {
@@ -189,33 +218,33 @@ app.get('/api/dns', apiLimiter, async (req, res) => {
     let records = [];
     switch (recordType) {
       case 'A': {
-        const v4 = await dns.resolve4(domain, { ttl: true });
+        const v4 = await dnsResolver.resolve4(domain, { ttl: true });
         records = v4.map(r => ({ address: r.address, ttl: r.ttl }));
         break;
       }
       case 'AAAA': {
-        const v6 = await dns.resolve6(domain, { ttl: true });
+        const v6 = await dnsResolver.resolve6(domain, { ttl: true });
         records = v6.map(r => ({ address: r.address, ttl: r.ttl }));
         break;
       }
       case 'MX': {
-        const mx = await dns.resolveMx(domain);
+        const mx = await dnsResolver.resolveMx(domain);
         records = mx.map(r => ({ priority: r.priority, exchange: r.exchange }));
         break;
       }
       case 'NS':
-        records = await dns.resolveNs(domain);
+        records = await dnsResolver.resolveNs(domain);
         break;
       case 'TXT': {
-        const txt = await dns.resolveTxt(domain);
+        const txt = await dnsResolver.resolveTxt(domain);
         records = txt.map(r => r.join(''));
         break;
       }
       case 'CNAME':
-        records = await dns.resolveCname(domain);
+        records = await dnsResolver.resolveCname(domain);
         break;
       case 'SOA':
-        records = [await dns.resolveSoa(domain)];
+        records = [await dnsResolver.resolveSoa(domain)];
         break;
     }
     res.json({ domain, type: recordType, records });
@@ -226,6 +255,17 @@ app.get('/api/dns', apiLimiter, async (req, res) => {
       res.status(500).json({ error: err.message });
     }
   }
+});
+
+// GET /api/myip – return the client IP as seen by the server.
+// Useful as a fallback when the browser cannot reach external IP-detection
+// APIs (e.g. ipify.org).
+app.get('/api/myip', (req, res) => {
+  const forwarded = req.headers['x-forwarded-for'];
+  let ip = forwarded ? forwarded.split(',')[0].trim() : req.socket.remoteAddress;
+  // Strip the IPv4-mapped IPv6 prefix (::ffff:x.x.x.x → x.x.x.x)
+  if (ip && ip.startsWith('::ffff:')) ip = ip.slice(7);
+  res.json({ ip: ip || null });
 });
 
 /* ─── Start server ───────────────────────────────────────────────────── */
