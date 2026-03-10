@@ -15,16 +15,6 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.use('/css', express.static(path.join(__dirname, 'css')));
 app.use('/js', express.static(path.join(__dirname, 'js')));
 
-// Serve Leaflet from node_modules
-app.use('/vendor/leaflet', express.static(
-  path.join(__dirname, 'node_modules/leaflet/dist')
-));
-
-// Serve Font Awesome from node_modules
-app.use('/vendor/fontawesome', express.static(
-  path.join(__dirname, 'node_modules/@fortawesome/fontawesome-free')
-));
-
 /* ─── IP validation ──────────────────────────────────────────────────── */
 
 function isIPv4(ip) {
