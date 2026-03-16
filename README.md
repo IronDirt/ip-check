@@ -1,6 +1,7 @@
 # IP Check
 
 Web app per:
+
 - rilevare IP pubblico
 - ping verso IP
 - lookup DNS
@@ -24,6 +25,7 @@ sudo REPO_URL="https://github.com/ORG/REPO.git" APP_DIR="/opt/ip-check" APP_USER
 ```
 
 Lo script:
+
 - installa dipendenze (`nodejs`, `npm`, `iputils-ping`, `git`, `curl`)
 - installa dipendenze Node del progetto
 - configura/aggiorna `systemd`
@@ -75,6 +77,7 @@ sudo nano /etc/systemd/system/ip-check.service
 ```
 
 Controlla questi campi nel service:
+
 - `User`
 - `WorkingDirectory`
 - `ExecStart` (path reale di `node`, verifica con `which node`)
@@ -178,6 +181,7 @@ sudo apt install -y dnsutils
 ### 6) Mappa IP vuota
 
 Possibili cause:
+
 - server senza accesso Internet verso servizi geo
 - blocchi DNS/egress
 
