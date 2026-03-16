@@ -28,7 +28,8 @@ const I18N = {
       copied: "Copiato!",
       loading: "Caricamento...",
       notAvailable: "Non disponibile",
-      refreshBtn: "Aggiorna",
+        refreshBtn: "Aggiorna",
+        mapUnavailable: "Mappa non disponibile",
     },
     ping: {
       heading: "Strumento Ping",
@@ -95,7 +96,8 @@ const I18N = {
       copied: "Copied!",
       loading: "Loading…",
       notAvailable: "Not available",
-      refreshBtn: "Refresh",
+        refreshBtn: "Refresh",
+        mapUnavailable: "Map unavailable",
     },
     ping: {
       heading: "Ping Tool",
@@ -234,6 +236,9 @@ function initOrUpdateMap(
   lon,
   popupHtml,
 ) {
+  if (typeof L === "undefined") {
+    throw new Error("Leaflet unavailable");
+  }
   if (existingMap) {
     existingMap.setView([lat, lon], 10);
     // Remove old marker via stored reference (avoids fragile instanceof check)
@@ -258,6 +263,12 @@ function initOrUpdateMap(
     .bindPopup(popupHtml)
     .openPopup();
   return { map, marker };
+}
+
+function renderMapUnavailable(mapId, message) {
+  const el = document.getElementById(mapId);
+  if (!el) return;
+  el.innerHTML = `<div class="map-fallback-msg">${escHtml(message || t("myip.notAvailable"))}</div>`;
 }
 
 /* ── Location details renderer ──────────────────────────────────────── */
@@ -337,6 +348,13 @@ function isBackendUnavailableError(err) {
     /backend non disponibile|failed to fetch|networkerror|not found/i.test(
       String(err.message || err),
     )
+  );
+}
+
+function isLeafletUnavailableError(err) {
+  return (
+    err &&
+    /leaflet|l is not defined|map unavailable/i.test(String(err.message || err))
   );
 }
 
@@ -479,23 +497,7 @@ async function loadMyIP() {
     renderLocationDetails("myip-location-details", geo);
     if (Number.isFinite(geo.lat) && Number.isFinite(geo.lon)) {
       const popup = `<b>${escHtml(geo.city || "")}, ${escHtml(geo.country || "")}</b>`;
-      const result = initOrUpdateMap(
-        "myip-map",
-        myipMap,
-        myipMarker,
-        geo.lat,
-        geo.lon,
-        popup,
-      );
-      myipMap = result.map;
-      myipMarker = result.marker;
-    }
-  } catch (err) {
-    try {
-      const geo = await fetchGeoFallback(geoTarget);
-      renderLocationDetails("myip-location-details", geo);
-      if (Number.isFinite(geo.lat) && Number.isFinite(geo.lon)) {
-        const popup = `<b>${escHtml(geo.city || "")}, ${escHtml(geo.country || "")}</b>`;
+      try {
         const result = initOrUpdateMap(
           "myip-map",
           myipMap,
@@ -506,11 +508,46 @@ async function loadMyIP() {
         );
         myipMap = result.map;
         myipMarker = result.marker;
+      } catch (mapErr) {
+        renderMapUnavailable("myip-map", t("myip.mapUnavailable"));
+        if (isLeafletUnavailableError(mapErr)) {
+          showToast("⚠ Mappa non disponibile: libreria mappa non caricata.");
+        }
       }
-    } catch (_) {
+    } else {
+      renderMapUnavailable("myip-map", t("myip.notAvailable"));
+    }
+  } catch (err) {
+    try {
+      const geo = await fetchGeoFallback(geoTarget);
+      renderLocationDetails("myip-location-details", geo);
+      if (Number.isFinite(geo.lat) && Number.isFinite(geo.lon)) {
+        const popup = `<b>${escHtml(geo.city || "")}, ${escHtml(geo.country || "")}</b>`;
+        try {
+          const result = initOrUpdateMap(
+            "myip-map",
+            myipMap,
+            myipMarker,
+            geo.lat,
+            geo.lon,
+            popup,
+          );
+          myipMap = result.map;
+          myipMarker = result.marker;
+        } catch (mapErr) {
+          renderMapUnavailable("myip-map", t("myip.mapUnavailable"));
+          if (isLeafletUnavailableError(mapErr)) {
+            showToast("⚠ Mappa non disponibile: libreria mappa non caricata.");
+          }
+        }
+      } else {
+        renderMapUnavailable("myip-map", t("myip.notAvailable"));
+      }
+    } catch (fallbackErr) {
       document.getElementById("myip-location-details").innerHTML =
         `<p style="color:var(--text-muted);font-size:.9rem">${t("myip.notAvailable")}</p>`;
-      if (isBackendUnavailableError(err)) {
+      renderMapUnavailable("myip-map", t("myip.notAvailable"));
+      if (isBackendUnavailableError(err) || isBackendUnavailableError(fallbackErr)) {
         showToast(
           "⚠ API backend non disponibile: avvia il server Node per tutte le funzioni complete.",
         );
@@ -673,16 +710,21 @@ async function doPing(ip) {
         renderLocationDetails("ping-location-details", geo);
         if (geo.lat && geo.lon) {
           const popup = `<b>${escHtml(ip)}</b><br>${escHtml(geo.city || "")}, ${escHtml(geo.country || "")}`;
-          const result = initOrUpdateMap(
-            "ping-map",
-            pingMap,
-            pingMarker,
-            geo.lat,
-            geo.lon,
-            popup,
-          );
-          pingMap = result.map;
-          pingMarker = result.marker;
+          try {
+            const result = initOrUpdateMap(
+              "ping-map",
+              pingMap,
+              pingMarker,
+              geo.lat,
+              geo.lon,
+              popup,
+            );
+            pingMap = result.map;
+            pingMarker = result.marker;
+          } catch (_) {
+            document.getElementById("ping-map").innerHTML =
+              `<div class="map-fallback-msg">${escHtml(t("myip.mapUnavailable"))}</div>`;
+          }
         }
       }
     } catch (_) {
