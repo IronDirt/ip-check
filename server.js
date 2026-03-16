@@ -324,8 +324,7 @@ app.post("/api/ping/stream", apiLimiter, (req, res) => {
         const output = await runSingleProbe(trimmed);
         fullOutput += output;
 
-        const packet =
-          parsePingPacketLine(output) ||
+        const packet = parsePingPacketLine(output) ||
           parsePingOutput(output).packets[0] || {
             seq: i + 1,
             status: "timeout",
@@ -334,7 +333,10 @@ app.post("/api/ping/stream", apiLimiter, (req, res) => {
         packets.push(packet);
         sendEvent({ type: "packet", packet });
       } catch (err) {
-        sendEvent({ type: "error", error: "Ping command failed: " + err.message });
+        sendEvent({
+          type: "error",
+          error: "Ping command failed: " + err.message,
+        });
         if (!res.writableEnded) {
           res.end();
         }
@@ -354,7 +356,9 @@ app.post("/api/ping/stream", apiLimiter, (req, res) => {
     const rtt = times.length
       ? {
           min: Number(Math.min(...times).toFixed(3)),
-          avg: Number((times.reduce((a, b) => a + b, 0) / times.length).toFixed(3)),
+          avg: Number(
+            (times.reduce((a, b) => a + b, 0) / times.length).toFixed(3),
+          ),
           max: Number(Math.max(...times).toFixed(3)),
         }
       : null;

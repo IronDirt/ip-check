@@ -674,9 +674,11 @@ async function doPing(ip) {
     const current = Math.min(expectedPackets, packets.length);
     const pct = (current / expectedPackets) * 100;
     if (progressWrapEl) progressWrapEl.hidden = false;
-    if (progressTextEl) progressTextEl.textContent = `${current}/${expectedPackets}`;
+    if (progressTextEl)
+      progressTextEl.textContent = `${current}/${expectedPackets}`;
     if (progressFillEl) progressFillEl.style.width = `${pct}%`;
-    if (progressBarEl) progressBarEl.setAttribute("aria-valuenow", String(current));
+    if (progressBarEl)
+      progressBarEl.setAttribute("aria-valuenow", String(current));
   };
 
   const setLivePingingBadge = () => {
