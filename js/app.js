@@ -683,7 +683,10 @@ async function doPing(ip) {
         ? 0
         : safeRatio >= 1
           ? expectedPackets
-          : Math.min(expectedPackets, Math.max(1, Math.ceil(safeRatio * expectedPackets)));
+          : Math.min(
+              expectedPackets,
+              Math.max(1, Math.ceil(safeRatio * expectedPackets)),
+            );
     simulatedCount = current;
     if (progressWrapEl) progressWrapEl.hidden = false;
     if (progressTextEl) {
