@@ -669,16 +669,49 @@ async function doPing(ip) {
 
   const packets = [];
   const expectedPackets = 5;
+  const progressDurationMs = 4000;
+  const progressStart = Date.now();
+  let progressTimer = null;
 
-  const updateProgress = () => {
-    const current = Math.min(expectedPackets, packets.length);
-    const pct = (current / expectedPackets) * 100;
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const setProgressUi = (ratio) => {
+    const safeRatio = Math.max(0, Math.min(1, ratio));
+    const current = Math.min(expectedPackets, Math.floor(safeRatio * expectedPackets));
     if (progressWrapEl) progressWrapEl.hidden = false;
-    if (progressTextEl)
+    if (progressTextEl) {
       progressTextEl.textContent = `${current}/${expectedPackets}`;
-    if (progressFillEl) progressFillEl.style.width = `${pct}%`;
-    if (progressBarEl)
+    }
+    if (progressFillEl) {
+      progressFillEl.style.width = `${(safeRatio * 100).toFixed(1)}%`;
+    }
+    if (progressBarEl) {
       progressBarEl.setAttribute("aria-valuenow", String(current));
+    }
+  };
+
+  const startSimulatedProgress = () => {
+    setProgressUi(0);
+    progressTimer = setInterval(() => {
+      const elapsed = Date.now() - progressStart;
+      const ratio = elapsed / progressDurationMs;
+      setProgressUi(ratio);
+      if (ratio >= 1 && progressTimer) {
+        clearInterval(progressTimer);
+        progressTimer = null;
+      }
+    }, 80);
+  };
+
+  const completeProgress = () => {
+    if (progressTimer) {
+      clearInterval(progressTimer);
+      progressTimer = null;
+    }
+    if (progressWrapEl) progressWrapEl.hidden = false;
+    if (progressTextEl) progressTextEl.textContent = `${expectedPackets}/${expectedPackets}`;
+    if (progressFillEl) progressFillEl.style.width = "100%";
+    if (progressBarEl) progressBarEl.setAttribute("aria-valuenow", String(expectedPackets));
   };
 
   const setLivePingingBadge = () => {
@@ -716,7 +749,8 @@ async function doPing(ip) {
     }
   };
 
-  updateProgress();
+  renderPackets();
+  startSimulatedProgress();
   setLivePingingBadge();
 
   let data = null;
@@ -760,17 +794,6 @@ async function doPing(ip) {
 
         if (event.type === "packet" && event.packet) {
           packets.push(event.packet);
-          renderPackets();
-          updateProgress();
-          const hasReply = packets.some((p) => p.status === "reply");
-          if (packets.length < expectedPackets) {
-            if (hasReply) {
-              statusBadgeEl.className = "badge badge-green";
-              statusBadgeEl.innerHTML = `<span class="status-dot dot-green"></span> ${escHtml(t("ping.online"))} (${packets.length}/${expectedPackets})`;
-            } else {
-              setLivePingingBadge();
-            }
-          }
         } else if (event.type === "error") {
           throw new Error(event.error || "Ping stream failed");
         } else if (event.type === "summary" && event.data) {
@@ -791,8 +814,6 @@ async function doPing(ip) {
       });
       if (Array.isArray(data.parsed?.packets)) {
         packets.splice(0, packets.length, ...data.parsed.packets);
-        renderPackets();
-        updateProgress();
       }
     } catch (fallbackErr) {
       errEl.textContent =
@@ -803,6 +824,10 @@ async function doPing(ip) {
           : "");
       errEl.hidden = false;
       tbody.innerHTML = "";
+      if (progressTimer) {
+        clearInterval(progressTimer);
+        progressTimer = null;
+      }
       if (progressWrapEl) progressWrapEl.hidden = true;
       btn.disabled = false;
       btn.innerHTML = `<i class="fa-solid fa-paper-plane"></i> ${escHtml(t("ping.pingBtn"))}`;
@@ -810,7 +835,12 @@ async function doPing(ip) {
     }
   }
 
-  updateProgress();
+  const elapsed = Date.now() - progressStart;
+  if (elapsed < progressDurationMs) {
+    await wait(progressDurationMs - elapsed);
+  }
+  completeProgress();
+  renderPackets();
 
   if (!packets.length) {
     tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted)">${escHtml(t("ping.offline"))}</td></tr>`;
