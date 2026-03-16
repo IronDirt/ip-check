@@ -677,7 +677,10 @@ async function doPing(ip) {
 
   const setProgressUi = (ratio) => {
     const safeRatio = Math.max(0, Math.min(1, ratio));
-    const current = Math.min(expectedPackets, Math.floor(safeRatio * expectedPackets));
+    const current = Math.min(
+      expectedPackets,
+      Math.floor(safeRatio * expectedPackets),
+    );
     if (progressWrapEl) progressWrapEl.hidden = false;
     if (progressTextEl) {
       progressTextEl.textContent = `${current}/${expectedPackets}`;
@@ -709,9 +712,11 @@ async function doPing(ip) {
       progressTimer = null;
     }
     if (progressWrapEl) progressWrapEl.hidden = false;
-    if (progressTextEl) progressTextEl.textContent = `${expectedPackets}/${expectedPackets}`;
+    if (progressTextEl)
+      progressTextEl.textContent = `${expectedPackets}/${expectedPackets}`;
     if (progressFillEl) progressFillEl.style.width = "100%";
-    if (progressBarEl) progressBarEl.setAttribute("aria-valuenow", String(expectedPackets));
+    if (progressBarEl)
+      progressBarEl.setAttribute("aria-valuenow", String(expectedPackets));
   };
 
   const setLivePingingBadge = () => {
