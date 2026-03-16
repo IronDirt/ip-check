@@ -156,6 +156,8 @@ let currentTheme =
     : "light");
 let myipMap = null;
 let pingMap = null;
+let myipTileLayer = null;
+let pingTileLayer = null;
 // Keep marker references so we can remove them without fragile instanceof checks
 let myipMarker = null;
 let pingMarker = null;
@@ -194,6 +196,7 @@ function applyTheme() {
   const icon = document.getElementById("theme-icon");
   icon.className =
     currentTheme === "dark" ? "fa-solid fa-sun" : "fa-solid fa-moon";
+  refreshMapTileLayers();
   // Refresh Leaflet maps to redraw tiles
   if (myipMap) {
     myipMap.invalidateSize();
@@ -254,21 +257,61 @@ function initOrUpdateMap(
     return { map: existingMap, marker };
   }
   const map = L.map(mapId, { zoomControl: true, scrollWheelZoom: false });
-  L.tileLayer(
-    "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
-    {
-      attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-      subdomains: "abcd",
-      maxZoom: 20,
-    },
-  ).addTo(map);
+  const tileLayer = createBaseTileLayer().addTo(map);
+  if (mapId === "myip-map") {
+    myipTileLayer = tileLayer;
+  } else if (mapId === "ping-map") {
+    pingTileLayer = tileLayer;
+  }
   map.setView([lat, lon], defaultZoom);
   const marker = L.marker([lat, lon])
     .addTo(map)
     .bindPopup(popupHtml)
     .openPopup();
   return { map, marker };
+}
+
+function getTileConfigByTheme() {
+  if (currentTheme === "dark") {
+    return {
+      url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+      options: {
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        subdomains: "abcd",
+        maxZoom: 20,
+      },
+    };
+  }
+
+  return {
+    url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+    options: {
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      subdomains: "abcd",
+      maxZoom: 20,
+    },
+  };
+}
+
+function createBaseTileLayer() {
+  const cfg = getTileConfigByTheme();
+  return L.tileLayer(cfg.url, cfg.options);
+}
+
+function replaceMapTileLayer(map, currentTileLayer) {
+  if (!map) return null;
+  if (currentTileLayer) {
+    map.removeLayer(currentTileLayer);
+  }
+  const nextTileLayer = createBaseTileLayer().addTo(map);
+  return nextTileLayer;
+}
+
+function refreshMapTileLayers() {
+  myipTileLayer = replaceMapTileLayer(myipMap, myipTileLayer);
+  pingTileLayer = replaceMapTileLayer(pingMap, pingTileLayer);
 }
 
 function renderMapUnavailable(mapId, message) {
