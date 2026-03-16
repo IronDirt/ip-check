@@ -74,7 +74,7 @@ const I18N = {
       invalidDomain: "Inserisci un dominio valido",
       loading: "Ricerca in corso…",
     },
-    footer: { madeWith: "Fatto con" },
+    footer: { copyright: "IP Check. Tutti i diritti riservati." },
   },
   en: {
     nav: { myip: "My IP", ping: "Ping", dns: "DNS Lookup" },
@@ -142,7 +142,7 @@ const I18N = {
       invalidDomain: "Please enter a valid domain",
       loading: "Looking up…",
     },
-    footer: { madeWith: "Made with" },
+    footer: { copyright: "IP Check. All rights reserved." },
   },
 };
 
@@ -236,11 +236,12 @@ function initOrUpdateMap(
   lon,
   popupHtml,
 ) {
+  const defaultZoom = 13;
   if (typeof L === "undefined") {
     throw new Error("Leaflet unavailable");
   }
   if (existingMap) {
-    existingMap.setView([lat, lon], 10);
+    existingMap.setView([lat, lon], defaultZoom);
     // Remove old marker via stored reference (avoids fragile instanceof check)
     if (existingMarkerRef) {
       existingMap.removeLayer(existingMarkerRef);
@@ -253,11 +254,13 @@ function initOrUpdateMap(
     return { map: existingMap, marker };
   }
   const map = L.map(mapId, { zoomControl: true, scrollWheelZoom: false });
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: '© <a href="https://openstreetmap.org">OpenStreetMap</a>',
-    maxZoom: 19,
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: "abcd",
+    maxZoom: 20,
   }).addTo(map);
-  map.setView([lat, lon], 10);
+  map.setView([lat, lon], defaultZoom);
   const marker = L.marker([lat, lon])
     .addTo(map)
     .bindPopup(popupHtml)
@@ -608,43 +611,26 @@ async function doPing(ip) {
   document.getElementById("ping-geo-section").hidden = true;
 
   const tbody = document.getElementById("ping-tbody");
-  tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted)">
-    <i class="fa-solid fa-spinner spinner"></i> ${escHtml(t("ping.pinging"))}</td></tr>`;
-  document.getElementById("ping-stats").innerHTML = "";
-
-  let data;
-  try {
-    data = await fetchJSON("/api/ping", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ip }),
-    });
-  } catch (err) {
-    errEl.textContent =
-      "❌ " +
-      err.message +
-      (isBackendUnavailableError(err)
-        ? " (Ping richiede il backend Node attivo)"
-        : "");
-    errEl.hidden = false;
-    tbody.innerHTML = "";
-    btn.disabled = false;
-    btn.innerHTML = `<i class="fa-solid fa-paper-plane"></i> ${escHtml(t("ping.pingBtn"))}`;
-    return;
-  }
-
-  // Determine max time for bar scaling
-  const times = (data.parsed.packets || [])
-    .filter((p) => p.time)
-    .map((p) => p.time);
-  const maxT = times.length ? Math.max(...times) : 1;
-
-  // Render packets table
   tbody.innerHTML = "";
-  if (!data.parsed.packets || data.parsed.packets.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted)">${escHtml(t("ping.offline"))}</td></tr>`;
-  } else {
-    for (const pkt of data.parsed.packets) {
+  document.getElementById("ping-stats").innerHTML = "";
+  const statusBadgeEl = document.getElementById("ping-status-badge");
+  statusBadgeEl.className = "badge badge-amber";
+  statusBadgeEl.innerHTML = `<span class="status-dot dot-amber"></span> ${escHtml(t("ping.pinging"))}`;
+
+  const packets = [];
+
+  const renderPackets = () => {
+    const times = packets.filter((p) => p.time).map((p) => p.time);
+    const maxT = times.length ? Math.max(...times) : 1;
+
+    tbody.innerHTML = "";
+    if (!packets.length) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted)">
+        <i class="fa-solid fa-spinner spinner"></i> ${escHtml(t("ping.pinging"))}</td></tr>`;
+      return;
+    }
+
+    for (const pkt of packets) {
       const timeHtml =
         pkt.time !== undefined
           ? `<div class="time-bar-wrap">
@@ -661,10 +647,97 @@ async function doPing(ip) {
         <td class="mono">${pkt.bytes ?? "—"}</td>`;
       tbody.appendChild(row);
     }
+  };
+
+  let data = null;
+  try {
+    const response = await fetch("/api/ping/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ip }),
+    });
+    if (!response.ok) {
+      const err = await response
+        .json()
+        .catch(() => ({ error: response.statusText || "Ping failed" }));
+      throw new Error(err.error || response.statusText || "Ping failed");
+    }
+    if (!response.body) {
+      throw new Error("Streaming response unavailable");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const trimmedLine = line.trim();
+        if (!trimmedLine) continue;
+        let event;
+        try {
+          event = JSON.parse(trimmedLine);
+        } catch (_) {
+          continue;
+        }
+
+        if (event.type === "packet" && event.packet) {
+          packets.push(event.packet);
+          renderPackets();
+          const hasReply = packets.some((p) => p.status === "reply");
+          statusBadgeEl.className = hasReply ? "badge badge-green" : "badge badge-amber";
+          statusBadgeEl.innerHTML = hasReply
+            ? `<span class="status-dot dot-green"></span> ${t("ping.online")}`
+            : `<span class="status-dot dot-amber"></span> ${escHtml(t("ping.pinging"))}`;
+        } else if (event.type === "error") {
+          throw new Error(event.error || "Ping stream failed");
+        } else if (event.type === "summary" && event.data) {
+          data = event.data;
+        }
+      }
+    }
+
+    if (!data) {
+      throw new Error("Ping stream ended without summary");
+    }
+  } catch (err) {
+    try {
+      data = await fetchJSON("/api/ping", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ip }),
+      });
+      if (Array.isArray(data.parsed?.packets)) {
+        packets.splice(0, packets.length, ...data.parsed.packets);
+        renderPackets();
+      }
+    } catch (fallbackErr) {
+      errEl.textContent =
+        "❌ " +
+        (fallbackErr.message || err.message) +
+        (isBackendUnavailableError(fallbackErr)
+          ? " (Ping richiede il backend Node attivo)"
+          : "");
+      errEl.hidden = false;
+      tbody.innerHTML = "";
+      btn.disabled = false;
+      btn.innerHTML = `<i class="fa-solid fa-paper-plane"></i> ${escHtml(t("ping.pingBtn"))}`;
+      return;
+    }
+  }
+
+  if (!packets.length) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted)">${escHtml(t("ping.offline"))}</td></tr>`;
   }
 
   // Ping status badge in card title
-  const statusBadgeEl = document.getElementById("ping-status-badge");
   if (data.success) {
     statusBadgeEl.className = "badge badge-green";
     statusBadgeEl.innerHTML = `<span class="status-dot dot-green"></span> ${t("ping.online")}`;
@@ -888,6 +961,11 @@ function switchTab(tabId) {
    ══════════════════════════════════════════════════════════════════════ */
 
 function init() {
+  const footerYear = document.getElementById("footer-year");
+  if (footerYear) {
+    footerYear.textContent = String(new Date().getFullYear());
+  }
+
   // Apply saved preferences
   applyTheme();
   applyTranslations();

@@ -2,6 +2,7 @@
 
 const express = require("express");
 const { execFile } = require("child_process");
+const { spawn } = require("child_process");
 const http = require("http");
 const https = require("https");
 const { Resolver: DnsPromiseResolver } = require("dns").promises;
@@ -166,6 +167,50 @@ function parsePingOutput(output) {
   return { packets, stats, rtt };
 }
 
+function parsePingPacketLine(line) {
+  const replyMatch = line.match(
+    /(\d+) bytes from (.+?): icmp_seq=(\d+) ttl=(\d+) time=([\d.]+) ms/,
+  );
+  if (replyMatch) {
+    return {
+      seq: parseInt(replyMatch[3], 10),
+      bytes: parseInt(replyMatch[1], 10),
+      from: replyMatch[2],
+      ttl: parseInt(replyMatch[4], 10),
+      time: parseFloat(replyMatch[5]),
+      status: "reply",
+    };
+  }
+
+  const timeoutMac = line.match(/Request timeout for icmp_seq (\d+)/);
+  if (timeoutMac) {
+    return { seq: parseInt(timeoutMac[1], 10), status: "timeout" };
+  }
+
+  if (
+    line.includes("Destination Host Unreachable") ||
+    line.includes("unreachable")
+  ) {
+    const seqM = line.match(/icmp_seq=(\d+)/);
+    if (seqM) {
+      return { seq: parseInt(seqM[1], 10), status: "unreachable" };
+    }
+  }
+
+  return null;
+}
+
+function getPingCommand(ip, count) {
+  const isWin = process.platform === "win32";
+  if (isWin) {
+    return { bin: "ping", args: ["-n", String(count), ip] };
+  }
+  if (isIPv6(ip)) {
+    return { bin: "ping", args: ["-6", "-c", String(count), "-W", "3", ip] };
+  }
+  return { bin: "ping", args: ["-4", "-c", String(count), "-W", "3", ip] };
+}
+
 /* ─── Routes ─────────────────────────────────────────────────────────── */
 
 // Rate limiter: max 10 ping/DNS requests per minute per IP
@@ -189,21 +234,7 @@ app.post("/api/ping", apiLimiter, (req, res) => {
   }
 
   const count = 5;
-  const isWin = process.platform === "win32";
-
-  // Use execFile (not exec) to avoid shell interpretation — arguments are
-  // passed directly to the OS so no shell escaping is needed or possible.
-  let bin, args;
-  if (isWin) {
-    bin = "ping";
-    args = ["-n", String(count), trimmed];
-  } else if (isIPv6(trimmed)) {
-    bin = "ping";
-    args = ["-6", "-c", String(count), "-W", "3", trimmed];
-  } else {
-    bin = "ping";
-    args = ["-4", "-c", String(count), "-W", "3", trimmed];
-  }
+  const { bin, args } = getPingCommand(trimmed, count);
 
   execFile(bin, args, { timeout: 30000 }, (error, stdout, stderr) => {
     // error is set when the process exits non-zero (e.g. 100% packet loss)
@@ -225,6 +256,106 @@ app.post("/api/ping", apiLimiter, (req, res) => {
       raw: output,
       timestamp: new Date().toISOString(),
     });
+  });
+});
+
+// POST /api/ping/stream - stream ping packets in near real-time (NDJSON)
+app.post("/api/ping/stream", apiLimiter, (req, res) => {
+  const { ip } = req.body || {};
+  if (!ip || typeof ip !== "string") {
+    return res.status(400).json({ error: "IP address is required" });
+  }
+  const trimmed = ip.trim();
+  if (!isValidIP(trimmed)) {
+    return res.status(400).json({ error: "Invalid IP address format" });
+  }
+
+  const count = 5;
+  const { bin, args } = getPingCommand(trimmed, count);
+  const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+
+  res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+
+  let fullOutput = "";
+  let stdoutBuffer = "";
+  let stderrBuffer = "";
+
+  function sendEvent(payload) {
+    if (!res.writableEnded) {
+      res.write(JSON.stringify(payload) + "\n");
+    }
+  }
+
+  function processBufferedLines(fromStderr = false) {
+    const sourceBuffer = fromStderr ? stderrBuffer : stdoutBuffer;
+    const lines = sourceBuffer.split(/\r?\n/);
+    const remaining = lines.pop();
+
+    for (const line of lines) {
+      if (!line) continue;
+      const packet = parsePingPacketLine(line);
+      if (packet) {
+        sendEvent({ type: "packet", packet });
+      }
+    }
+
+    if (fromStderr) {
+      stderrBuffer = remaining || "";
+    } else {
+      stdoutBuffer = remaining || "";
+    }
+  }
+
+  child.stdout.on("data", (chunk) => {
+    const text = chunk.toString("utf8");
+    fullOutput += text;
+    stdoutBuffer += text;
+    processBufferedLines(false);
+  });
+
+  child.stderr.on("data", (chunk) => {
+    const text = chunk.toString("utf8");
+    fullOutput += text;
+    stderrBuffer += text;
+    processBufferedLines(true);
+  });
+
+  child.on("error", (err) => {
+    sendEvent({ type: "error", error: "Ping command failed: " + err.message });
+    res.end();
+  });
+
+  child.on("close", () => {
+    if (stdoutBuffer) {
+      const packet = parsePingPacketLine(stdoutBuffer);
+      if (packet) sendEvent({ type: "packet", packet });
+    }
+    if (stderrBuffer) {
+      const packet = parsePingPacketLine(stderrBuffer);
+      if (packet) sendEvent({ type: "packet", packet });
+    }
+
+    const parsed = parsePingOutput(fullOutput);
+    sendEvent({
+      type: "summary",
+      data: {
+        ip: trimmed,
+        success: parsed.packets.some((p) => p.status === "reply"),
+        parsed,
+        raw: fullOutput,
+        timestamp: new Date().toISOString(),
+      },
+    });
+    res.end();
+  });
+
+  req.on("close", () => {
+    if (!child.killed) {
+      child.kill("SIGTERM");
+    }
   });
 });
 
