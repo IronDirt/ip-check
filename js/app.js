@@ -211,7 +211,13 @@ function renderLocationDetails(containerId, geo) {
 async function fetchJSON(url, opts) {
   const res = await fetch(url, opts);
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
+    const err = await res.json().catch(async () => {
+      const text = await res.text().catch(() => '');
+      if (text && /<html|<!doctype/i.test(text)) {
+        return { error: 'API backend non disponibile. Avvia il server Node su questa app.' };
+      }
+      return { error: res.statusText };
+    });
     throw new Error(err.error || res.statusText);
   }
   return res.json();
@@ -228,6 +234,74 @@ function escHtml(s) {
 /* ── IP helpers ─────────────────────────────────────────────────────── */
 
 function looksLikeIPv6(ip) { return typeof ip === 'string' && ip.includes(':'); }
+
+function isBackendUnavailableError(err) {
+  return err && /backend non disponibile|failed to fetch|networkerror|not found/i.test(String(err.message || err));
+}
+
+async function fetchGeoFallback(ip) {
+  const target = ip === 'me' ? 'https://ipapi.co/json/' : `https://ipapi.co/${encodeURIComponent(ip)}/json/`;
+  const data = await fetchJSON(target);
+  if (!data || data.error) {
+    throw new Error(data && data.reason ? data.reason : 'Geolocalizzazione non disponibile');
+  }
+  return {
+    status: 'success',
+    country: data.country_name,
+    countryCode: data.country_code,
+    regionName: data.region,
+    city: data.city,
+    zip: data.postal,
+    lat: data.latitude,
+    lon: data.longitude,
+    timezone: data.timezone,
+    isp: data.org,
+    as: data.asn,
+    query: data.ip
+  };
+}
+
+function dnsTypeToCode(type) {
+  const map = { A: 1, NS: 2, CNAME: 5, SOA: 6, MX: 15, TXT: 16, AAAA: 28 };
+  return map[type] || 1;
+}
+
+function normalizeDohRecord(type, rawData) {
+  if (type === 'MX') {
+    const m = String(rawData).match(/^(\d+)\s+(.+)$/);
+    return m ? { priority: Number(m[1]), exchange: m[2].replace(/\.$/, '') } : { priority: '—', exchange: String(rawData) };
+  }
+  if (type === 'A' || type === 'AAAA') {
+    return { address: String(rawData), ttl: '—' };
+  }
+  if (type === 'TXT') {
+    return String(rawData).replace(/^"|"$/g, '');
+  }
+  if (type === 'SOA') {
+    const p = String(rawData).trim().split(/\s+/);
+    return {
+      nsname: p[0] || '',
+      hostmaster: p[1] || '',
+      serial: p[2] || '',
+      refresh: p[3] || '',
+      retry: p[4] || '',
+      expire: p[5] || '',
+      minttl: p[6] || ''
+    };
+  }
+  return String(rawData).replace(/\.$/, '');
+}
+
+async function dnsLookupFallback(domain, type) {
+  const code = dnsTypeToCode(type);
+  const url = `https://dns.google/resolve?name=${encodeURIComponent(domain)}&type=${code}`;
+  const data = await fetchJSON(url);
+  const answers = Array.isArray(data.Answer) ? data.Answer : [];
+  const records = answers
+    .filter(a => a.type === code)
+    .map(a => normalizeDohRecord(type, a.data));
+  return { domain, type, records };
+}
 
 // Ask the server for the IP it sees for this connection.
 // Returns null when the endpoint is unreachable or the response is malformed.
@@ -291,15 +365,29 @@ async function loadMyIP() {
   try {
     const geo = await fetchJSON(`/api/geoip/${encodeURIComponent(geoTarget)}`);
     renderLocationDetails('myip-location-details', geo);
-    if (geo.lat && geo.lon) {
+    if (Number.isFinite(geo.lat) && Number.isFinite(geo.lon)) {
       const popup = `<b>${escHtml(geo.city || '')}, ${escHtml(geo.country || '')}</b>`;
       const result = initOrUpdateMap('myip-map', myipMap, myipMarker, geo.lat, geo.lon, popup);
       myipMap = result.map;
       myipMarker = result.marker;
     }
-  } catch (_) {
-    document.getElementById('myip-location-details').innerHTML =
-      `<p style="color:var(--text-muted);font-size:.9rem">${t('myip.notAvailable')}</p>`;
+  } catch (err) {
+    try {
+      const geo = await fetchGeoFallback(geoTarget);
+      renderLocationDetails('myip-location-details', geo);
+      if (Number.isFinite(geo.lat) && Number.isFinite(geo.lon)) {
+        const popup = `<b>${escHtml(geo.city || '')}, ${escHtml(geo.country || '')}</b>`;
+        const result = initOrUpdateMap('myip-map', myipMap, myipMarker, geo.lat, geo.lon, popup);
+        myipMap = result.map;
+        myipMarker = result.marker;
+      }
+    } catch (_) {
+      document.getElementById('myip-location-details').innerHTML =
+        `<p style="color:var(--text-muted);font-size:.9rem">${t('myip.notAvailable')}</p>`;
+      if (isBackendUnavailableError(err)) {
+        showToast('⚠ API backend non disponibile: avvia il server Node per tutte le funzioni complete.');
+      }
+    }
   }
 }
 
@@ -362,7 +450,9 @@ async function doPing(ip) {
       body: JSON.stringify({ ip })
     });
   } catch (err) {
-    errEl.textContent = '❌ ' + err.message;
+    errEl.textContent = '❌ ' + err.message + (isBackendUnavailableError(err)
+      ? ' (Ping richiede il backend Node attivo)'
+      : '');
     errEl.hidden = false;
     tbody.innerHTML = '';
     btn.disabled = false;
@@ -496,12 +586,17 @@ async function doDNSLookup(domain, type) {
   try {
     data = await fetchJSON(`/api/dns?domain=${encodeURIComponent(domain)}&type=${encodeURIComponent(type)}`);
   } catch (err) {
-    errEl.textContent = '❌ ' + err.message;
-    errEl.hidden = false;
-    tbody.innerHTML = '';
-    btn.disabled = false;
-    btn.innerHTML = `<i class="fa-solid fa-search"></i> <span data-i18n="dns.lookupBtn">${escHtml(t('dns.lookupBtn'))}</span>`;
-    return;
+    try {
+      data = await dnsLookupFallback(domain, type);
+      showToast('ℹ Fallback DNS over HTTPS attivato (backend non raggiungibile).');
+    } catch (fallbackErr) {
+      errEl.textContent = '❌ ' + (fallbackErr.message || err.message);
+      errEl.hidden = false;
+      tbody.innerHTML = '';
+      btn.disabled = false;
+      btn.innerHTML = `<i class="fa-solid fa-search"></i> <span data-i18n="dns.lookupBtn">${escHtml(t('dns.lookupBtn'))}</span>`;
+      return;
+    }
   }
 
   // Build table based on type

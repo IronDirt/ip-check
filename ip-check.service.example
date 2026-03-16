@@ -1,0 +1,16 @@
+[Unit]
+Description=IP Check Node Service
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/ip-check
+Environment=NODE_ENV=production
+Environment=PORT=3000
+ExecStart=/usr/bin/node /opt/ip-check/server.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

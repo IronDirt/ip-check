@@ -44,6 +44,17 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.use('/css', express.static(path.join(__dirname, 'css')));
 app.use('/js', express.static(path.join(__dirname, 'js')));
 
+// GET /api/health - lightweight health check for deployments and monitoring
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'ip-check',
+    node: process.version,
+    uptimeSec: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString()
+  });
+});
+
 /* ─── IP validation ──────────────────────────────────────────────────── */
 
 function isIPv4(ip) {
