@@ -672,15 +672,19 @@ async function doPing(ip) {
   const progressDurationMs = 4000;
   const progressStart = Date.now();
   let progressTimer = null;
+  let simulatedCount = 0;
 
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const setProgressUi = (ratio) => {
     const safeRatio = Math.max(0, Math.min(1, ratio));
-    const current = Math.min(
-      expectedPackets,
-      Math.floor(safeRatio * expectedPackets),
-    );
+    const current =
+      safeRatio <= 0
+        ? 0
+        : safeRatio >= 1
+          ? expectedPackets
+          : Math.min(expectedPackets, Math.max(1, Math.ceil(safeRatio * expectedPackets)));
+    simulatedCount = current;
     if (progressWrapEl) progressWrapEl.hidden = false;
     if (progressTextEl) {
       progressTextEl.textContent = `${current}/${expectedPackets}`;
@@ -691,6 +695,7 @@ async function doPing(ip) {
     if (progressBarEl) {
       progressBarEl.setAttribute("aria-valuenow", String(current));
     }
+    setLivePingingBadge(current);
   };
 
   const startSimulatedProgress = () => {
@@ -711,17 +716,19 @@ async function doPing(ip) {
       clearInterval(progressTimer);
       progressTimer = null;
     }
+    simulatedCount = expectedPackets;
     if (progressWrapEl) progressWrapEl.hidden = false;
     if (progressTextEl)
       progressTextEl.textContent = `${expectedPackets}/${expectedPackets}`;
     if (progressFillEl) progressFillEl.style.width = "100%";
     if (progressBarEl)
       progressBarEl.setAttribute("aria-valuenow", String(expectedPackets));
+    setLivePingingBadge(expectedPackets);
   };
 
-  const setLivePingingBadge = () => {
+  const setLivePingingBadge = (current = simulatedCount) => {
     statusBadgeEl.className = "badge badge-amber";
-    statusBadgeEl.innerHTML = `<span class="status-dot dot-amber"></span> ${escHtml(t("ping.pinging"))} (${packets.length}/${expectedPackets})`;
+    statusBadgeEl.innerHTML = `<span class="status-dot dot-amber"></span> ${escHtml(t("ping.pinging"))} (${current}/${expectedPackets})`;
   };
 
   const renderPackets = () => {
@@ -756,7 +763,6 @@ async function doPing(ip) {
 
   renderPackets();
   startSimulatedProgress();
-  setLivePingingBadge();
 
   let data = null;
   try {
