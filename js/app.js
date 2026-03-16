@@ -28,8 +28,8 @@ const I18N = {
       copied: "Copiato!",
       loading: "Caricamento...",
       notAvailable: "Non disponibile",
-        refreshBtn: "Aggiorna",
-        mapUnavailable: "Mappa non disponibile",
+      refreshBtn: "Aggiorna",
+      mapUnavailable: "Mappa non disponibile",
     },
     ping: {
       heading: "Strumento Ping",
@@ -96,8 +96,8 @@ const I18N = {
       copied: "Copied!",
       loading: "Loading…",
       notAvailable: "Not available",
-        refreshBtn: "Refresh",
-        mapUnavailable: "Map unavailable",
+      refreshBtn: "Refresh",
+      mapUnavailable: "Map unavailable",
     },
     ping: {
       heading: "Ping Tool",
@@ -547,7 +547,10 @@ async function loadMyIP() {
       document.getElementById("myip-location-details").innerHTML =
         `<p style="color:var(--text-muted);font-size:.9rem">${t("myip.notAvailable")}</p>`;
       renderMapUnavailable("myip-map", t("myip.notAvailable"));
-      if (isBackendUnavailableError(err) || isBackendUnavailableError(fallbackErr)) {
+      if (
+        isBackendUnavailableError(err) ||
+        isBackendUnavailableError(fallbackErr)
+      ) {
         showToast(
           "⚠ API backend non disponibile: avvia il server Node per tutte le funzioni complete.",
         );
