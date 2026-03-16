@@ -184,13 +184,17 @@ Possibili cause:
 
 - server senza accesso Internet verso servizi geo
 - blocchi DNS/egress
+- egress HTTP (porta 80) bloccato dal provider/firewall
 
 Test rapido:
 
 ```bash
+curl -s http://127.0.0.1:3000/api/geoip/me
 curl -I http://ip-api.com
 curl -I https://ipapi.co
 ```
+
+Se `ip-api.com` fallisce ma `ipapi.co` risponde, le versioni recenti del backend usano fallback HTTPS automatico.
 
 ## Note importanti
 

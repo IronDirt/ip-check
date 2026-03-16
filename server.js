@@ -3,6 +3,7 @@
 const express = require("express");
 const { execFile } = require("child_process");
 const http = require("http");
+const https = require("https");
 const { Resolver: DnsPromiseResolver } = require("dns").promises;
 const { Resolver: DnsCallbackResolver } = require("dns");
 const path = require("path");
@@ -30,6 +31,18 @@ dnsResolver.setServers(COMBINED_DNS);
 const cbResolver = new DnsCallbackResolver();
 cbResolver.setServers(COMBINED_DNS);
 const geoipAgent = new http.Agent({
+  lookup: (hostname, _opts, cb) => {
+    cbResolver.resolve4(hostname, (err, v4) => {
+      if (!err) return cb(null, v4[0], 4);
+      cbResolver.resolve6(hostname, (err2, v6) => {
+        if (!err2) return cb(null, v6[0], 6);
+        cb(err2);
+      });
+    });
+  },
+});
+
+const geoipHttpsAgent = new https.Agent({
   lookup: (hostname, _opts, cb) => {
     cbResolver.resolve4(hostname, (err, v4) => {
       if (!err) return cb(null, v4[0], 4);
@@ -226,6 +239,58 @@ app.get("/api/geoip/:ip", apiLimiter, (req, res) => {
   const apiPath = ip === "me" ? "" : ip;
   const apiUrl = `http://ip-api.com/json/${apiPath}?fields=${fields}`;
 
+  function normalizeIpApiCo(payload) {
+    return {
+      status: "success",
+      country: payload.country_name || null,
+      countryCode: payload.country_code || null,
+      region: payload.region_code || null,
+      regionName: payload.region || null,
+      city: payload.city || null,
+      zip: payload.postal || null,
+      lat: payload.latitude,
+      lon: payload.longitude,
+      timezone: payload.timezone || null,
+      isp: payload.org || null,
+      org: payload.org || null,
+      as: payload.asn || null,
+      query: payload.ip || null,
+    };
+  }
+
+  function fallbackIpApiCo() {
+    const fallbackUrl =
+      ip === "me"
+        ? "https://ipapi.co/json/"
+        : `https://ipapi.co/${encodeURIComponent(ip)}/json/`;
+
+    https
+      .get(fallbackUrl, { agent: geoipHttpsAgent }, (fallbackRes) => {
+        let fallbackData = "";
+        fallbackRes.on("data", (chunk) => {
+          fallbackData += chunk;
+        });
+        fallbackRes.on("end", () => {
+          try {
+            const parsed = JSON.parse(fallbackData);
+            if (parsed && !parsed.error && !parsed.reason) {
+              return res.json(normalizeIpApiCo(parsed));
+            }
+            return res
+              .status(500)
+              .json({ error: "Geolocation service unavailable" });
+          } catch (_) {
+            return res
+              .status(500)
+              .json({ error: "Failed to parse geolocation response" });
+          }
+        });
+      })
+      .on("error", () =>
+        res.status(500).json({ error: "Geolocation service unavailable" }),
+      );
+  }
+
   http
     .get(apiUrl, { agent: geoipAgent }, (apiRes) => {
       let data = "";
@@ -234,17 +299,17 @@ app.get("/api/geoip/:ip", apiLimiter, (req, res) => {
       });
       apiRes.on("end", () => {
         try {
-          res.json(JSON.parse(data));
+          const parsed = JSON.parse(data);
+          if (parsed && parsed.status !== "fail") {
+            return res.json(parsed);
+          }
+          return fallbackIpApiCo();
         } catch (_) {
-          res
-            .status(500)
-            .json({ error: "Failed to parse geolocation response" });
+          return fallbackIpApiCo();
         }
       });
     })
-    .on("error", () =>
-      res.status(500).json({ error: "Geolocation service unavailable" }),
-    );
+    .on("error", fallbackIpApiCo);
 });
 
 // GET /api/dns?domain=example.com&type=A
