@@ -254,12 +254,15 @@ function initOrUpdateMap(
     return { map: existingMap, marker };
   }
   const map = L.map(mapId, { zoomControl: true, scrollWheelZoom: false });
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
-    attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    subdomains: "abcd",
-    maxZoom: 20,
-  }).addTo(map);
+  L.tileLayer(
+    "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+    {
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      subdomains: "abcd",
+      maxZoom: 20,
+    },
+  ).addTo(map);
   map.setView([lat, lon], defaultZoom);
   const marker = L.marker([lat, lon])
     .addTo(map)
@@ -692,7 +695,9 @@ async function doPing(ip) {
           packets.push(event.packet);
           renderPackets();
           const hasReply = packets.some((p) => p.status === "reply");
-          statusBadgeEl.className = hasReply ? "badge badge-green" : "badge badge-amber";
+          statusBadgeEl.className = hasReply
+            ? "badge badge-green"
+            : "badge badge-amber";
           statusBadgeEl.innerHTML = hasReply
             ? `<span class="status-dot dot-green"></span> ${t("ping.online")}`
             : `<span class="status-dot dot-amber"></span> ${escHtml(t("ping.pinging"))}`;
