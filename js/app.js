@@ -660,10 +660,29 @@ async function doPing(ip) {
   tbody.innerHTML = "";
   document.getElementById("ping-stats").innerHTML = "";
   const statusBadgeEl = document.getElementById("ping-status-badge");
+  const progressWrapEl = document.getElementById("ping-progress");
+  const progressTextEl = document.getElementById("ping-progress-text");
+  const progressFillEl = document.getElementById("ping-progress-fill");
+  const progressBarEl = progressFillEl && progressFillEl.parentElement;
   statusBadgeEl.className = "badge badge-amber";
   statusBadgeEl.innerHTML = `<span class="status-dot dot-amber"></span> ${escHtml(t("ping.pinging"))}`;
 
   const packets = [];
+  const expectedPackets = 5;
+
+  const updateProgress = () => {
+    const current = Math.min(expectedPackets, packets.length);
+    const pct = (current / expectedPackets) * 100;
+    if (progressWrapEl) progressWrapEl.hidden = false;
+    if (progressTextEl) progressTextEl.textContent = `${current}/${expectedPackets}`;
+    if (progressFillEl) progressFillEl.style.width = `${pct}%`;
+    if (progressBarEl) progressBarEl.setAttribute("aria-valuenow", String(current));
+  };
+
+  const setLivePingingBadge = () => {
+    statusBadgeEl.className = "badge badge-amber";
+    statusBadgeEl.innerHTML = `<span class="status-dot dot-amber"></span> ${escHtml(t("ping.pinging"))} (${packets.length}/${expectedPackets})`;
+  };
 
   const renderPackets = () => {
     const times = packets.filter((p) => p.time).map((p) => p.time);
@@ -694,6 +713,9 @@ async function doPing(ip) {
       tbody.appendChild(row);
     }
   };
+
+  updateProgress();
+  setLivePingingBadge();
 
   let data = null;
   try {
@@ -737,13 +759,16 @@ async function doPing(ip) {
         if (event.type === "packet" && event.packet) {
           packets.push(event.packet);
           renderPackets();
+          updateProgress();
           const hasReply = packets.some((p) => p.status === "reply");
-          statusBadgeEl.className = hasReply
-            ? "badge badge-green"
-            : "badge badge-amber";
-          statusBadgeEl.innerHTML = hasReply
-            ? `<span class="status-dot dot-green"></span> ${t("ping.online")}`
-            : `<span class="status-dot dot-amber"></span> ${escHtml(t("ping.pinging"))}`;
+          if (packets.length < expectedPackets) {
+            if (hasReply) {
+              statusBadgeEl.className = "badge badge-green";
+              statusBadgeEl.innerHTML = `<span class="status-dot dot-green"></span> ${escHtml(t("ping.online"))} (${packets.length}/${expectedPackets})`;
+            } else {
+              setLivePingingBadge();
+            }
+          }
         } else if (event.type === "error") {
           throw new Error(event.error || "Ping stream failed");
         } else if (event.type === "summary" && event.data) {
@@ -765,6 +790,7 @@ async function doPing(ip) {
       if (Array.isArray(data.parsed?.packets)) {
         packets.splice(0, packets.length, ...data.parsed.packets);
         renderPackets();
+        updateProgress();
       }
     } catch (fallbackErr) {
       errEl.textContent =
@@ -775,11 +801,14 @@ async function doPing(ip) {
           : "");
       errEl.hidden = false;
       tbody.innerHTML = "";
+      if (progressWrapEl) progressWrapEl.hidden = true;
       btn.disabled = false;
       btn.innerHTML = `<i class="fa-solid fa-paper-plane"></i> ${escHtml(t("ping.pingBtn"))}`;
       return;
     }
   }
+
+  updateProgress();
 
   if (!packets.length) {
     tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted)">${escHtml(t("ping.offline"))}</td></tr>`;

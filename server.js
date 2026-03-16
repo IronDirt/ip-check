@@ -271,8 +271,6 @@ app.post("/api/ping/stream", apiLimiter, (req, res) => {
   }
 
   const count = 5;
-  const { bin, args } = getPingCommand(trimmed, count);
-  const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
 
   res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -280,81 +278,111 @@ app.post("/api/ping/stream", apiLimiter, (req, res) => {
   res.setHeader("X-Accel-Buffering", "no");
 
   let fullOutput = "";
-  let stdoutBuffer = "";
-  let stderrBuffer = "";
+  let clientClosed = false;
+  let runningChild = null;
 
   function sendEvent(payload) {
-    if (!res.writableEnded) {
+    if (!res.writableEnded && !clientClosed) {
       res.write(JSON.stringify(payload) + "\n");
     }
   }
 
-  function processBufferedLines(fromStderr = false) {
-    const sourceBuffer = fromStderr ? stderrBuffer : stdoutBuffer;
-    const lines = sourceBuffer.split(/\r?\n/);
-    const remaining = lines.pop();
+  function runSingleProbe(targetIp) {
+    return new Promise((resolve, reject) => {
+      const { bin, args } = getPingCommand(targetIp, 1);
+      runningChild = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
 
-    for (const line of lines) {
-      if (!line) continue;
-      const packet = parsePingPacketLine(line);
-      if (packet) {
+      let output = "";
+      runningChild.stdout.on("data", (chunk) => {
+        output += chunk.toString("utf8");
+      });
+      runningChild.stderr.on("data", (chunk) => {
+        output += chunk.toString("utf8");
+      });
+
+      runningChild.on("error", (err) => {
+        runningChild = null;
+        reject(err);
+      });
+
+      runningChild.on("close", () => {
+        runningChild = null;
+        resolve(output);
+      });
+    });
+  }
+
+  (async () => {
+    const packets = [];
+
+    for (let i = 0; i < count; i += 1) {
+      if (clientClosed) {
+        return;
+      }
+
+      try {
+        const output = await runSingleProbe(trimmed);
+        fullOutput += output;
+
+        const packet =
+          parsePingPacketLine(output) ||
+          parsePingOutput(output).packets[0] || {
+            seq: i + 1,
+            status: "timeout",
+          };
+
+        packets.push(packet);
         sendEvent({ type: "packet", packet });
+      } catch (err) {
+        sendEvent({ type: "error", error: "Ping command failed: " + err.message });
+        if (!res.writableEnded) {
+          res.end();
+        }
+        return;
       }
     }
 
-    if (fromStderr) {
-      stderrBuffer = remaining || "";
-    } else {
-      stdoutBuffer = remaining || "";
-    }
-  }
+    const replyPackets = packets.filter(
+      (p) => p.status === "reply" && typeof p.time === "number",
+    );
+    const transmitted = packets.length;
+    const received = replyPackets.length;
+    const packetLoss = transmitted
+      ? Number((((transmitted - received) / transmitted) * 100).toFixed(1))
+      : 100;
+    const times = replyPackets.map((p) => p.time);
+    const rtt = times.length
+      ? {
+          min: Number(Math.min(...times).toFixed(3)),
+          avg: Number((times.reduce((a, b) => a + b, 0) / times.length).toFixed(3)),
+          max: Number(Math.max(...times).toFixed(3)),
+        }
+      : null;
 
-  child.stdout.on("data", (chunk) => {
-    const text = chunk.toString("utf8");
-    fullOutput += text;
-    stdoutBuffer += text;
-    processBufferedLines(false);
-  });
-
-  child.stderr.on("data", (chunk) => {
-    const text = chunk.toString("utf8");
-    fullOutput += text;
-    stderrBuffer += text;
-    processBufferedLines(true);
-  });
-
-  child.on("error", (err) => {
-    sendEvent({ type: "error", error: "Ping command failed: " + err.message });
-    res.end();
-  });
-
-  child.on("close", () => {
-    if (stdoutBuffer) {
-      const packet = parsePingPacketLine(stdoutBuffer);
-      if (packet) sendEvent({ type: "packet", packet });
-    }
-    if (stderrBuffer) {
-      const packet = parsePingPacketLine(stderrBuffer);
-      if (packet) sendEvent({ type: "packet", packet });
-    }
-
-    const parsed = parsePingOutput(fullOutput);
     sendEvent({
       type: "summary",
       data: {
         ip: trimmed,
-        success: parsed.packets.some((p) => p.status === "reply"),
-        parsed,
+        success: received > 0,
+        parsed: {
+          packets,
+          stats: { transmitted, received, packetLoss },
+          rtt,
+        },
         raw: fullOutput,
         timestamp: new Date().toISOString(),
       },
     });
-    res.end();
-  });
+
+    if (!res.writableEnded) {
+      res.end();
+    }
+  })();
 
   req.on("close", () => {
-    if (!child.killed) {
-      child.kill("SIGTERM");
+    clientClosed = true;
+    if (runningChild && !runningChild.killed) {
+      runningChild.kill("SIGTERM");
     }
   });
 });

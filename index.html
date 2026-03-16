@@ -206,6 +206,14 @@
                 <span data-i18n="ping.results">Risultati Ping</span>
                 <span class="badge" id="ping-status-badge"></span>
               </div>
+              <div class="ping-progress" id="ping-progress" hidden>
+                <div class="ping-progress-head">
+                  <span class="mono" id="ping-progress-text">0/5</span>
+                </div>
+                <div class="ping-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0">
+                  <div class="ping-progress-fill" id="ping-progress-fill"></div>
+                </div>
+              </div>
               <div class="table-wrapper">
                 <table class="results-table" id="ping-table">
                   <thead>
